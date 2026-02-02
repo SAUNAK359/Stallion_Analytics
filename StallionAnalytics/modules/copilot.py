@@ -1,66 +1,88 @@
-import openai
 import google.generativeai as genai
+import openai
 import json
 import streamlit as st
 
 class StallionCopilot:
-    def __init__(self, provider, api_key, model, df):
+    """
+    The SQL-Aware Active Agent with Context & Suggestions.
+    """
+    
+    def __init__(self, provider, api_key, model, db_engine):
         self.provider = provider
         self.api_key = api_key
         self.model = model
-        self.df = df 
+        self.db = db_engine
 
-    def process_query(self, user_query, current_config, data_metadata):
-        system_prompt = f"""You are the Co-Pilot for Stallion Analytics. You have full control over the Dashboard Configuration.
-
-CURRENT DASHBOARD JSON:
-{json.dumps(current_config)}
-
-DATA METADATA:
-{data_metadata}
-
-USER COMMAND:
-"{user_query}"
-
-INSTRUCTIONS:
-1. If the user wants to CHANGE the visual layout (e.g., "Change chart to line", "Add a KPI for Profit", "Remove the second chart"),
-   return a JSON object with "response_type": "update_dashboard" and "content": {{THE COMPLETE UPDATED DASHBOARD JSON}}.
-   
-2. If the user asks a specific question about the data (e.g., "Why is sales down?", "Summarize the dataset"),
-   return a JSON object with "response_type": "text_answer" and "content": "Your analytical answer here".
-   
-3. OUTPUT MUST BE STRICT JSON ONLY. No Markdown."""
+    def process_query(self, user_query, current_config, schema_metadata, focused_context=None):
+        """
+        focused_context: ID/Title of the specific chart/KPI the user wants to modify.
+        """
         
-        response_text = self._call_ai(system_prompt)
+        # 1. Handle Context Filtering
+        context_str = "Global Dashboard (The user is asking about the entire dataset or layout)"
+        
+        # Check if user selected a specific Chart/KPI
+        if focused_context and "Global" not in focused_context:
+            context_str = f"FOCUS AREA: The user is explicitly pointing at this component: '{focused_context}'."
+
+        system_prompt = f"""
+        You are the SQL Co-Pilot for Stallion Analytics.
+        
+        DATABASE SCHEMA:
+        {schema_metadata}
+        
+        CURRENT DASHBOARD JSON:
+        {json.dumps(current_config)}
+        
+        CONTEXT: {context_str}
+        
+        USER COMMAND: "{user_query}"
+        
+        INSTRUCTIONS:
+        1. Decide if this is a Dashboard Update (Visual/SQL change) or a Text Answer (Analysis).
+        2. IF Update: Return "response_type": "update_dashboard" and the FULL updated JSON in "content".
+        3. IF Answer: Return "response_type": "text_answer" and the analytical text in "content".
+        4. ALWAYS provide 2 short, clickable "suggestions" for next steps.
+        
+        OUTPUT FORMAT (Strict JSON):
+        {{
+            "response_type": "update_dashboard" | "text_answer",
+            "content": "string or json_object",
+            "suggestions": ["Action 1", "Action 2"]
+        }}
+        """
         
         try:
+            response_text = self._call_ai(system_prompt)
             return self._clean_json(response_text)
-        except:
-            return {"response_type": "text_answer", "content": response_text}
+        except Exception as e:
+            # Fallback if AI fails or returns bad JSON
+            return {
+                "response_type": "text_answer", 
+                "content": f"I analyzed the data but encountered an error parsing the response. Raw output: {str(e)}",
+                "suggestions": ["Try simpler query", "Check Data"]
+            }
 
     def _call_ai(self, prompt):
         if self.provider == "Google Gemini":
             genai.configure(api_key=self.api_key)
-            model = genai.GenerativeModel(self.model if self.model else "gemini-2.5-pro")
+            model = genai.GenerativeModel(self.model)
             return model.generate_content(prompt).text
         else:
             client = openai.OpenAI(api_key=self.api_key)
             resp = client.chat.completions.create(
-                model=self.model if self.model else "gpt-3.5-turbo",
+                model=self.model,
                 messages=[{"role": "system", "content": prompt}]
             )
             return resp.choices[0].message.content
 
     def _clean_json(self, text):
+        # Remove markdown fences and whitespace
         clean = text.replace("```json", "").replace("```", "").strip()
-        try:
-            return json.loads(clean)
-        except json.JSONDecodeError:
-            try:
-                start = clean.find("{")
-                end = clean.rfind("}") + 1
-                if start != -1 and end != -1:
-                    return json.loads(clean[start:end])
-                return clean
-            except Exception:
-                 return clean
+        # Sometimes AI adds extra text outside JSON, try to find the first { and last }
+        start = clean.find("{")
+        end = clean.rfind("}") + 1
+        if start != -1 and end != -1:
+            clean = clean[start:end]
+        return json.loads(clean)

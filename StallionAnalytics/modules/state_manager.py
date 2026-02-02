@@ -1,4 +1,5 @@
 import streamlit as st
+from modules.db_manager import StallionDB
 
 def init_session_state():
     defaults = {
@@ -11,7 +12,9 @@ def init_session_state():
         "notifications": [],
         "api_key": None,
         "ai_provider": "Google Gemini", 
-        "ai_model": "gemini-2.5-pro"
+        "ai_model": "gemini-2.5-pro",
+        "db_engine": None,         # Placeholder for the DuckDB instance
+        "is_big_data_mode": True   # Flag to switch logic
     }
 
     for key, value in defaults.items():

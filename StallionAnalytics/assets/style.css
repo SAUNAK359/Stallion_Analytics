@@ -50,6 +50,37 @@ div.css-1r6slb0:hover {
     font-size: 12px;
 }
 
+/* Floating Chat Button Container */
+div[data-testid="stPopover"] {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    z-index: 9999;
+    border-radius: 50%;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+
+/* Style the button itself to look like a chat bubble */
+div[data-testid="stPopover"] > button {
+    width: 60px;
+    height: 60px;
+    border-radius: 30px;
+    background: linear-gradient(135deg, #00C6FF, #0072FF);
+    border: none;
+    color: white;
+    font-size: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Hover effect */
+div[data-testid="stPopover"] > button:hover {
+    transform: scale(1.1);
+    box-shadow: 0 0 20px rgba(0, 198, 255, 0.6);
+}
+}
+
 /* 5. Custom Button (Stallion Style) */
 .stButton > button {
     background: linear-gradient(90deg, #00C6FF 0%, #0072FF 100%);

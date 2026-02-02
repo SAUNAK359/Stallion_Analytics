@@ -11,7 +11,7 @@ class StallionReporter:
     def __init__(self, ai_engine):
         self.ai = ai_engine # Reference to the DashboardBrain/CoPilot to use the LLM
 
-    def generate_narrative(self, df, config):
+    def generate_narrative(self, db_engine, config):
         """
         Reads the current dashboard config and data, then asks AI for an Executive Summary.
         """
@@ -36,16 +36,20 @@ class StallionReporter:
         # For simplicity in this architecture, we reuse the prompt logic here or assume 'ai_engine' has a generic 'ask' method.
         # Since we didn't strictly define a generic 'ask' in Step 3, we will construct the request here.
         
-        # NOTE: In a production app, we would query the data for specific stats here before sending to LLM.
-        # For this step, we rely on the Metadata summary we already generated in Step 2.
-        
+        # Get Data Summary using DuckDB
+        try:
+            summary_df = db_engine.conn.execute("SUMMARIZE source_data").df()
+            data_summary = summary_df.to_string()
+        except Exception:
+            data_summary = "Data summary unavailable."
+
         user_msg = f"""
         Dashboard Structure:
         {kpi_text}
         {chart_text}
         
         Data Summary:
-        {df.describe().to_string()}
+        {data_summary}
         
         Write the Executive Summary now.
         """

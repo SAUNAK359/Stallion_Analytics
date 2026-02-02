@@ -1,12 +1,13 @@
 import streamlit as st
 from modules.state_manager import init_session_state, set_page
 from streamlit_extras.metric_cards import style_metric_cards
-from modules.data_loader import StallionLoader
+from modules.db_manager import StallionDB
 from modules.llm_engine import DashboardBrain
 from modules.renderer import StallionRenderer
 from modules.copilot import StallionCopilot
 from modules.reporter import StallionReporter
-from modules.reporter import StallionReporter
+
+# 1. Page Config
 st.set_page_config(
     page_title="Stallion Analytics",
     page_icon="🐎",
@@ -14,6 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# 2. Load CSS
 def load_css():
     try:
         with open("assets/style.css") as f:
@@ -21,146 +23,294 @@ def load_css():
     except FileNotFoundError:
         pass
 
+# 3. Sidebar
 def render_sidebar():
     with st.sidebar:
         st.title("🐎 Stallion")
+        st.caption("Enterprise Edition")
         st.markdown("---")
-        if st.button("🏠 Home", use_container_width=True):
-            set_page("Home")
-        if st.button("📊 Dashboard", use_container_width=True):
-            set_page("Dashboard")
-        if st.button("🧠 Analytics (Co-Pilot)", use_container_width=True):
-            set_page("Analytics")
+        
+        # Navigation
+        if st.button("🏠 Home", use_container_width=True): set_page("Home")
+        if st.button("📊 Dashboard", use_container_width=True): set_page("Dashboard")
+        # Note: 'Analytics' page is removed because it's now a floating widget
+        
         st.markdown("---")
-        with st.expander("🔐 API Settings", expanded=False):
+        
+        # API Settings
+        with st.expander("⚙️ AI Settings", expanded=False):
             provider = st.selectbox("AI Provider", ["Google Gemini", "OpenAI"])
             st.session_state["ai_provider"] = provider
-            label = f"{provider} API Key"
-            key = st.text_input(label, type="password", key="api_key_input")
-            if key:
-                st.session_state["api_key"] = key
-                st.success("Key Saved")
-        st.caption("Stallion AI v1.0.0")
+            
+            key_name = "Gemini Key" if provider == "Google Gemini" else "OpenAI Key"
+            api_key = st.text_input(key_name, type="password")
+            
+            if api_key: st.session_state["api_key"] = api_key
+            
+            # Set Model Defaults
+            st.session_state["ai_model"] = "gemini-2.5-pro" if provider == "Google Gemini" else "gpt-3.5-turbo"
+            
+        st.caption("Stallion AI v2.5.0")
 
+# --- IMPROVED FLOATING CO-PILOT ---
+def render_copilot():
+    """
+    Renders the floating chat bubble on every page with Toast notifications.
+    """
+    # Only show if data is loaded
+    if not st.session_state.get("db_engine"):
+        return
+
+    # Floating Popover (CSS makes it float bottom-right)
+    with st.popover("💬", use_container_width=False):
+        st.subheader("Stallion Co-Pilot")
+        
+        # 1. CONTEXT SELECTOR
+        # Scan dashboard config to find charts
+        config = st.session_state.get("dashboard_config", {})
+        context_options = ["Global (All Data)"]
+        
+        if "charts" in config:
+            for chart in config["charts"]:
+                context_options.append(f"Chart: {chart.get('title', 'Untitled')}")
+        if "kpi_cards" in config:
+            for kpi in config["kpi_cards"]:
+                context_options.append(f"KPI: {kpi.get('label', 'Metric')}")
+                
+        selected_context = st.selectbox("🎯 Focus Context:", context_options, index=0)
+
+        # 2. CHAT HISTORY
+        chat_container = st.container(height=300)
+        with chat_container:
+            for msg in st.session_state["chat_history"]:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+        # 3. INPUT
+        if prompt := st.chat_input("Ask or Change..."):
+            # Append User Msg
+            st.session_state["chat_history"].append({"role": "user", "content": prompt})
+            
+            # Show spinner inside the chat window
+            with chat_container:
+                with st.chat_message("user"): st.markdown(prompt)
+
+                with st.chat_message("assistant"):
+                    with st.spinner("Analyzing..."):
+                        copilot = StallionCopilot(
+                            provider=st.session_state["ai_provider"],
+                            api_key=st.session_state.get("api_key"),
+                            model=st.session_state["ai_model"],
+                            db_engine=st.session_state["db_engine"]
+                        )
+                        
+                        # Process with Context
+                        result = copilot.process_query(
+                            prompt, 
+                            st.session_state.get("dashboard_config", {}),
+                            st.session_state.get("data_metadata", ""),
+                            focused_context=selected_context
+                        )
+                        
+                        # Handle Response
+                        if result.get("response_type") == "update_dashboard":
+                            st.session_state["dashboard_config"] = result["content"]
+                            msg_text = "✅ Dashboard updated based on your command."
+                            # Toast Notification for Visibility
+                            st.toast("✅ Dashboard Layout Updated!", icon="📊")
+                            st.rerun() # Refresh main page to show changes!
+                        else:
+                            msg_text = result.get("content", "I couldn't generate a response.")
+                            st.toast("✅ Analysis Complete", icon="🧠")
+                        
+                        st.markdown(msg_text)
+                        
+                        # 4. SMART SUGGESTIONS
+                        if "suggestions" in result:
+                            st.caption("Suggested next steps:")
+                            cols = st.columns(len(result["suggestions"]))
+                            for i, sugg in enumerate(result["suggestions"]):
+                                cols[i].button(sugg, key=f"sugg_{len(st.session_state['chat_history'])}_{i}")
+
+            # Save Assistant Msg
+            st.session_state["chat_history"].append({"role": "assistant", "content": msg_text})
+            # We rely on the rerun inside the 'update_dashboard' block for visual updates.
+            # If it was just text, we might want to rerun to clear the input box.
+            if result.get("response_type") != "update_dashboard":
+                 st.rerun()
+
+
+# 4. Page: Home (Ingestion)
 def page_home():
     st.title("Welcome to Stallion Analytics")
-    st.markdown("### Agentic Interactive Dashboard Engine")
+    st.markdown("### Enterprise Big Data Engine")
+    
     uploaded_file = st.file_uploader(
-        "Upload your Data Source (CSV, JSON, Excel)", 
-        type=["csv", "xlsx", "xls", "json"],
-        help="Supported formats: CSV, Excel, JSON. Handles messy dates & encoding automatically."
+        "Upload Data (CSV, JSON, Parquet)", 
+        type=["csv", "json", "parquet"],
+        help="Streams large files directly into DuckDB without using RAM."
     )
+    
     if uploaded_file:
-        if st.button("Initialize Stallion Engine", type="primary"):
-            with st.spinner("Ingesting Data... Sanitizing Schema... Detecting Date Objects..."):
-                df, error = StallionLoader.load_file(uploaded_file)
+        if st.button("Initialize Engine", type="primary"):
+            with st.spinner("Streaming data into DuckDB..."):
+                # Initialize DB
+                db = StallionDB()
+                error = db.ingest_data(uploaded_file)
+                
                 if error:
                     st.error(error)
                 else:
-                    st.session_state["raw_data"] = df
-                    st.session_state["processed_data"] = df
-                    meta = StallionLoader.get_metadata(df)
-                    st.session_state["data_metadata"] = meta 
-                    st.success(f"Data Successfully Ingested! Shape: {df.shape}")
-                    with st.expander("Inspect Raw Data (Sanitized)"):
-                        st.dataframe(df.head(10), use_container_width=True)
-                    st.info("System Ready. Proceed to Dashboard or Analytics.")
-                    c1, c2 = st.columns(2)
-                    if c1.button("Go to Dashboard"):
-                        set_page("Dashboard")
-                    if c2.button("Ask Co-Pilot"):
-                        set_page("Analytics")
+                    # Success State
+                    st.session_state["db_engine"] = db
+                    st.session_state["data_metadata"] = db.get_schema()
+                    st.session_state["raw_data"] = "DuckDB-Managed" 
+                    
+                    st.success(f"Data Ingested Successfully!")
+                    
+                    # Preview Data
+                    with st.expander("Inspect Sample Rows (First 5)"):
+                        st.dataframe(db.get_sample(), use_container_width=True)
+                    
+                    # Quick Nav
+                    if st.button("Go to Dashboard"): set_page("Dashboard")
+
+    # Status Metrics
     st.markdown("---")
-    st.subheader("System Status")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Engine Status", "Online", "Ready")
-    c2.metric("Active Agents", "3", "Idle")
-    if st.session_state["raw_data"] is not None:
-        c3.metric("Data Loaded", "Yes", f"{len(st.session_state['raw_data'])} rows")
-    else:
-        c3.metric("Data Loaded", "No", "Waiting")
+    c1, c2 = st.columns(2)
+    c1.metric("Engine Status", "Online (DuckDB)", "Ready")
+    status = "Loaded" if st.session_state.get("db_engine") else "Waiting"
+    c2.metric("Data Status", status, "0ms Latency")
     style_metric_cards(background_color="#141928", border_left_color="#00E5FF")
 
+# 5. Page: Dashboard (Renderer)
 def page_dashboard():
     st.header("Dashboard")
-    if st.session_state["raw_data"] is None:
+    
+    # Check for DB Engine
+    if not st.session_state.get("db_engine"):
         st.info("No Data Loaded. Please go to Home and upload a dataset.")
-        if st.button("Go to Home"):
-            set_page("Home")
+        if st.button("Go to Home"): set_page("Home")
         return
+
+    # A. AI Architecting (If no layout exists)
     if not st.session_state.get("dashboard_config"):
         st.subheader("🤖 AI Architecting Session")
-        st.write("The AI is analyzing your data schema to design the optimal dashboard layout.")
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            intent = st.text_input("What is the goal of this dashboard?", "Overview of performance and key trends")
-        if st.button("Generate Dashboard Layout", type="primary"):
-            api_key = st.session_state.get("api_key")
-            provider = st.session_state.get("ai_provider", "Google Gemini")
-            model = st.session_state.get("ai_model")
-            brain = DashboardBrain(provider=provider, api_key=api_key, model=model)
-            with st.spinner(f"Contacting {provider}... Designing Layout..."):
+        
+        # 1. INITIALIZE BRAIN
+        brain = DashboardBrain(
+            provider=st.session_state.get("ai_provider"),
+            api_key=st.session_state.get("api_key"),
+            model=st.session_state.get("ai_model")
+        )
+
+        # 2. GENERATE SUGGESTIONS (Lazy Load)
+        if "intent_suggestions" not in st.session_state:
+            with st.spinner("🧠 AI is analyzing schema to find business insights..."):
+                suggestions = brain.suggest_intents(st.session_state["data_metadata"])
+                st.session_state["intent_suggestions"] = suggestions
+        
+        # 3. DISPLAY SUGGESTIONS
+        st.markdown("##### 💡 Suggested Analyses based on your data:")
+        
+        # Use columns to create a "Pill" layout
+        suggestions = st.session_state.get("intent_suggestions", [])
+        
+        # Create a grid of buttons
+        cols = st.columns(4) 
+        selected_intent = None
+        
+        for i, suggestion in enumerate(suggestions):
+            # cycle through columns
+            col = cols[i % 4]
+            if col.button(suggestion, use_container_width=True):
+                selected_intent = suggestion
+        
+        st.markdown("---")
+        st.write("Or define your own goal:")
+        
+        # 4. INPUT & GENERATION
+        default_val = selected_intent if selected_intent else "Overview of performance trends"
+        intent = st.text_input("Dashboard Goal", value=default_val)
+        
+        # If button clicked OR "Generate" clicked
+        if selected_intent or st.button("Generate Layout", type="primary"):
+            with st.spinner(f"Architecting Dashboard for: '{intent}'..."):
                 config = brain.generate_dashboard_layout(
                     st.session_state["data_metadata"], 
                     intent
                 )
-            if "error" in config:
-                st.error(config["error"])
-            else:
-                st.session_state["dashboard_config"] = config
-                st.rerun()
+                if "error" in config:
+                    st.error(config["error"])
+                else: 
+                    st.session_state["dashboard_config"] = config
+                    st.rerun()
         return
+
+    # B. Render Dashboard
     config = st.session_state["dashboard_config"]
-    df = st.session_state["processed_data"]
-    renderer = StallionRenderer(df)
+    db_engine = st.session_state["db_engine"]
+    
+    # Initialize SQL Renderer
+    renderer = StallionRenderer(db_engine)
+    
+    # Toolbar
     c1, c2 = st.columns([0.8, 0.2])
-    with c1:
-        st.caption(f"Generated via {st.session_state.get('ai_provider', 'Mock')}")
-    with c2:
-        if st.button("Regenerate Layout", use_container_width=True):
+    with c1: st.caption("Live SQL Query Mode")
+    with c2: 
+        if st.button("Reset Layout", use_container_width=True):
             st.session_state["dashboard_config"] = {}
             st.rerun()
+            
     renderer.render(config)
 
+    # C. Reporting Section
     st.markdown("---")
     st.subheader("📝 Intelligent Reporting")
     if "report_narrative" not in st.session_state:
         st.session_state["report_narrative"] = None
+        
     col1, col2 = st.columns([1, 3])
     with col1:
         if st.button("Generate Executive Brief", type="primary", use_container_width=True):
-            from modules.copilot import StallionCopilot
+            
+            # Initialize CoPilot to generate text
             copilot = StallionCopilot(
                 provider=st.session_state.get("ai_provider"),
                 api_key=st.session_state.get("api_key"),
                 model=st.session_state.get("ai_model"),
-                df=df
+                db_engine=db_engine
             )
+            
+            # Prepare Prompt
             reporter = StallionReporter(None)
-            sys_prompt, user_msg = reporter.generate_narrative(df, config)
+            sys_prompt, user_msg = reporter.generate_narrative(db_engine.get_sample(), config)
+            
             with st.spinner("AI is analyzing trends and writing the report..."):
                 full_prompt = f"{sys_prompt}\n\n{user_msg}"
                 narrative = copilot._call_ai(full_prompt)
                 st.session_state["report_narrative"] = narrative
                 st.rerun()
+                
     with col2:
         if st.session_state["report_narrative"]:
             with st.container(border=True):
                 st.markdown("### 📋 Executive Summary")
                 st.markdown(st.session_state["report_narrative"])
+                
+                # Calculate KPI values for Report HTML
                 kpi_values = {}
                 if "kpi_cards" in config:
                     for kpi in config["kpi_cards"]:
-                        col = kpi.get("column")
-                        op = kpi.get("operation", "count")
-                        if col in df.columns:
-                            if op == "sum": val = df[col].sum()
-                            elif op == "avg": val = df[col].mean()
-                            elif op == "count": val = len(df)
-                            else: val = 0
-                            if kpi.get("format") == "currency": val = f"${val:,.2f}"
-                            else: val = f"{val:,.2f}"
+                        sql = kpi.get("sql_query")
+                        df_res, _ = db_engine.run_query(sql)
+                        if not df_res.empty:
+                            val = df_res.iloc[0, 0]
+                            # Simple formatting
+                            if kpi.get("format") == "currency": val = f"${float(val):,.2f}"
+                            else: val = f"{float(val):,.2f}"
                             kpi_values[kpi.get("label")] = val
+
                 html_link = StallionReporter.create_html_report(
                     st.session_state["report_narrative"], 
                     kpi_values,
@@ -169,57 +319,18 @@ def page_dashboard():
                 st.markdown(html_link, unsafe_allow_html=True)
 
 
-def page_analytics():
-    st.header("🧠 Co-Pilot Interface")
-    if st.session_state["raw_data"] is None:
-        st.warning("Please upload data in Home first.")
-        return
-    if "api_key" not in st.session_state:
-        st.warning("Please configure AI Settings in the Sidebar.")
-        return
-    if not st.session_state.get("dashboard_config"):
-        st.info("No active dashboard found. Please generate one in the 'Dashboard' tab first.")
-        return
-    for msg in st.session_state["chat_history"]:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-    if prompt := st.chat_input("Ask me to analyze data or modify the dashboard..."):
-        st.session_state["chat_history"].append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                copilot = StallionCopilot(
-                    provider=st.session_state["ai_provider"],
-                    api_key=st.session_state["api_key"],
-                    model=st.session_state["ai_model"],
-                    df=st.session_state["processed_data"]
-                )
-                result = copilot.process_query(
-                    prompt, 
-                    st.session_state["dashboard_config"],
-                    st.session_state["data_metadata"]
-                )
-                if result.get("response_type") == "update_dashboard":
-                    new_config = result["content"]
-                    st.session_state["dashboard_config"] = new_config
-                    response_msg = "✅ Dashboard updated based on your request. Check the Dashboard tab."
-                    st.markdown(response_msg)
-                    st.session_state["chat_history"].append({"role": "assistant", "content": response_msg})
-                    with st.expander("View Configuration Changes"):
-                        st.json(new_config)
-                else:
-                    answer = result.get("content", "I couldn't process that.")
-                    st.markdown(answer)
-                    st.session_state["chat_history"].append({"role": "assistant", "content": answer})
-
+# MAIN EXECUTION
 if __name__ == "__main__":
     init_session_state()
     load_css()
     render_sidebar()
+    
+    # Render Main Page Content
     if st.session_state["page"] == "Home":
         page_home()
+        
     elif st.session_state["page"] == "Dashboard":
         page_dashboard()
-    elif st.session_state["page"] == "Analytics":
-        page_analytics()
+        
+    # ALWAYS RENDER THE FLOATING WIDGET LAST
+    render_copilot()

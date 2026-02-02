@@ -7,3 +7,4 @@ openai
 watchdog
 tabulate
 google-generativeai
+duckdb
