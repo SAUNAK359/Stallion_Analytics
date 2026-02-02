@@ -27,7 +27,7 @@ def load_css():
 def render_sidebar():
     with st.sidebar:
         st.title("🐎 Stallion")
-        st.caption("Enterprise Edition")
+        st.caption("Enterprise Edition v3.0")
         st.markdown("---")
         
         # Navigation
@@ -50,9 +50,9 @@ def render_sidebar():
             # Set Model Defaults
             st.session_state["ai_model"] = "gemini-2.5-pro" if provider == "Google Gemini" else "gpt-3.5-turbo"
             
-        st.caption("Stallion AI v2.5.0")
+        st.caption("Stallion AI v3.0.0")
 
-# --- IMPROVED FLOATING CO-PILOT ---
+# --- FLOATING CO-PILOT WIDGET ---
 def render_copilot():
     """
     Renders the floating chat bubble on every page with Toast notifications.
@@ -139,24 +139,26 @@ def render_copilot():
             if result.get("response_type") != "update_dashboard":
                  st.rerun()
 
-
 # 4. Page: Home (Ingestion)
 def page_home():
     st.title("Welcome to Stallion Analytics")
     st.markdown("### Enterprise Big Data Engine")
     
-    uploaded_file = st.file_uploader(
+    # UPDATED: Accept Multiple Files
+    uploaded_files = st.file_uploader(
         "Upload Data (CSV, JSON, Parquet)", 
         type=["csv", "json", "parquet"],
-        help="Streams large files directly into DuckDB without using RAM."
+        accept_multiple_files=True, # <--- NEW: Enable multi-file upload
+        help="Upload multiple files (e.g. Sales.csv + Customers.csv) for auto-blending."
     )
     
-    if uploaded_file:
+    if uploaded_files:
         if st.button("Initialize Engine", type="primary"):
             with st.spinner("Streaming data into DuckDB..."):
                 # Initialize DB
                 db = StallionDB()
-                error = db.ingest_data(uploaded_file)
+                # Pass list of files to DB
+                error, msg = db.ingest_data(uploaded_files)
                 
                 if error:
                     st.error(error)
@@ -166,10 +168,10 @@ def page_home():
                     st.session_state["data_metadata"] = db.get_schema()
                     st.session_state["raw_data"] = "DuckDB-Managed" 
                     
-                    st.success(f"Data Ingested Successfully!")
+                    st.success(f"Success! {msg}")
                     
                     # Preview Data
-                    with st.expander("Inspect Sample Rows (First 5)"):
+                    with st.expander("Inspect Sample Rows (First Table)"):
                         st.dataframe(db.get_sample(), use_container_width=True)
                     
                     # Quick Nav
@@ -215,13 +217,10 @@ def page_dashboard():
         
         # Use columns to create a "Pill" layout
         suggestions = st.session_state.get("intent_suggestions", [])
-        
-        # Create a grid of buttons
         cols = st.columns(4) 
         selected_intent = None
         
         for i, suggestion in enumerate(suggestions):
-            # cycle through columns
             col = cols[i % 4]
             if col.button(suggestion, use_container_width=True):
                 selected_intent = suggestion
@@ -233,7 +232,6 @@ def page_dashboard():
         default_val = selected_intent if selected_intent else "Overview of performance trends"
         intent = st.text_input("Dashboard Goal", value=default_val)
         
-        # If button clicked OR "Generate" clicked
         if selected_intent or st.button("Generate Layout", type="primary"):
             with st.spinner(f"Architecting Dashboard for: '{intent}'..."):
                 config = brain.generate_dashboard_layout(
@@ -256,10 +254,18 @@ def page_dashboard():
     
     # Toolbar
     c1, c2 = st.columns([0.8, 0.2])
-    with c1: st.caption("Live SQL Query Mode")
+    with c1: 
+        # Show active filters indicator
+        if st.session_state.get("active_filters"):
+            st.caption("⚠️ Filtered View Active")
+        else:
+            st.caption("Live SQL Query Mode")
+            
     with c2: 
         if st.button("Reset Layout", use_container_width=True):
             st.session_state["dashboard_config"] = {}
+            # Clear suggestions so they regenerate if data changed (optional)
+            # st.session_state.pop("intent_suggestions", None) 
             st.rerun()
             
     renderer.render(config)
@@ -303,10 +309,10 @@ def page_dashboard():
                 if "kpi_cards" in config:
                     for kpi in config["kpi_cards"]:
                         sql = kpi.get("sql_query")
+                        # Note: Reporting uses base SQL, not filtered SQL
                         df_res, _ = db_engine.run_query(sql)
                         if not df_res.empty:
                             val = df_res.iloc[0, 0]
-                            # Simple formatting
                             if kpi.get("format") == "currency": val = f"${float(val):,.2f}"
                             else: val = f"{float(val):,.2f}"
                             kpi_values[kpi.get("label")] = val

@@ -21,7 +21,7 @@ def init_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
-    if st.session_state["ai_model"] in ["gemini-1.5-flash", "gemini-1.5-pro"]:
+    if st.session_state["ai_model"] in ["gemini-2.5-pro"]:
         st.session_state["ai_model"] = "gemini-2.5-pro"
 
 def set_page(page_name):
