@@ -1,0 +1,75 @@
+/* Import modern font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+
+/* Global Reset */
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+}
+
+/* 1. Main Background - Deep Space Black */
+.stApp {
+    background-color: #050509; /* Very dark background */
+}
+
+/* 2. Sidebar Styling */
+section[data-testid="stSidebar"] {
+    background-color: #0b0c10;
+    border-right: 1px solid #1f2937;
+}
+
+/* 3. The "Glass" Card Effect */
+div.css-1r6slb0, div.stDataFrame, div.stPlotlyChart {
+    background: rgba(20, 25, 40, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 15px;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    transition: all 0.3s ease;
+}
+
+/* Hover Glow Effect */
+div.css-1r6slb0:hover {
+    border-color: rgba(0, 229, 255, 0.3); /* Cyan glow */
+    box-shadow: 0 0 15px rgba(0, 229, 255, 0.1);
+}
+
+/* 4. Metric Cards Customization */
+[data-testid="stMetricValue"] {
+    font-size: 28px;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+[data-testid="stMetricLabel"] {
+    font-size: 14px;
+    color: #94a3b8;
+}
+
+[data-testid="stMetricDelta"] {
+    font-size: 12px;
+}
+
+/* 5. Custom Button (Stallion Style) */
+.stButton > button {
+    background: linear-gradient(90deg, #00C6FF 0%, #0072FF 100%);
+    color: white;
+    border: none;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: transform 0.2s;
+}
+
+.stButton > button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 114, 255, 0.4);
+}
+
+/* 6. Remove default Streamlit Header padding */
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
