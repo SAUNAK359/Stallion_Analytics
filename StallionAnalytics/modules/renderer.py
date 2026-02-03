@@ -3,10 +3,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 from modules.forecaster import StallionForecaster
+# Import Copilot for the 'Deep Insights' feature
+from modules.copilot import StallionCopilot
 
 class StallionRenderer:
     """
-    The Big Data Visualizer with Interactive Cross-Filtering & Forecasting.
+    The Big Data Visualizer with Interactive Cross-Filtering, Forecasting & Deep Insights.
     """
     
     def __init__(self, db_engine):
@@ -76,11 +78,10 @@ class StallionRenderer:
                 with c2: self._draw_chart(charts[i+1], key=f"chart_{i+1}")
 
     def _draw_chart(self, chart_config, key):
-        """Executes SQL and draws chart with Forecasting Widget."""
         title = chart_config.get("title", "Untitled Chart")
         base_sql = chart_config.get("sql_query")
         c_type = chart_config.get("type", "bar")
-        description = chart_config.get("description") # Added description back
+        description = chart_config.get("description")
         
         # 1. Execution
         filtered_sql = self._inject_filters(base_sql)
@@ -98,8 +99,7 @@ class StallionRenderer:
         y_col = chart_config.get("y_column", df.columns[1] if len(df.columns) > 1 else df.columns[0])
         color_col = chart_config.get("color_column", None)
 
-        # 3. AGENTIC TIME-SERIES DETECTION
-        # Check if X-axis looks like a date
+        # 3. FORECAST WIDGET
         is_time_series = False
         try:
             pd.to_datetime(df[x_col])
@@ -107,65 +107,57 @@ class StallionRenderer:
         except:
             is_time_series = False
 
-        # --- FORECAST CONTROL PANEL (The "Time Machine") ---
         forecast_df = None
-        model_info = ""
         growth = 0.0
         
-        # Only enable for line/bar/area charts that are time-series
         if is_time_series and c_type in ["line", "area", "bar"]:
             with st.expander(f"🔮 Forecast Lab: {title}", expanded=False):
                 c1, c2, c3 = st.columns([0.2, 0.4, 0.4])
                 enable_forecast = c1.checkbox("Active", key=f"fc_en_{key}")
-                periods = c2.slider("Horizon", 1, 24, 6, key=f"fc_per_{key}", help="Months/Weeks into future")
-                growth = c3.slider("Scenario Growth %", -50, 50, 0, key=f"fc_gro_{key}", help="Simulate market conditions") / 100.0
+                periods = c2.slider("Horizon", 1, 24, 6, key=f"fc_per_{key}")
+                growth = c3.slider("Growth %", -50, 50, 0, key=f"fc_gro_{key}") / 100.0
                 
                 if enable_forecast:
                     forecaster = StallionForecaster()
-                    with st.spinner("🤖 Agent is modeling future trends..."):
-                        forecast_df, model_info = forecaster.generate_forecast(
-                            df, x_col, y_col, periods=periods, growth_factor=growth
-                        )
-                        if forecast_df is None:
-                            st.warning(f"Forecasting failed: {model_info}")
-                        else:
-                            st.caption(f"**Model Selected:** {model_info}")
+                    with st.spinner("Modeling..."):
+                        forecast_df, info = forecaster.generate_forecast(df, x_col, y_col, periods, growth)
+                        st.caption(f"**Model:** {info}")
 
         try:
-            # 4. Plotly Base Chart
-            if c_type == "bar":
-                fig = px.bar(df, x=x_col, y=y_col, color=color_col, title=title, template="plotly_dark")
-            elif c_type == "line":
-                fig = px.line(df, x=x_col, y=y_col, color=color_col, title=title, template="plotly_dark")
-            elif c_type == "pie":
-                fig = px.pie(df, names=x_col, values=y_col, title=title, template="plotly_dark")
-            elif c_type == "scatter":
-                fig = px.scatter(df, x=x_col, y=y_col, color=color_col, title=title, template="plotly_dark")
-            elif c_type == "area":
-                fig = px.area(df, x=x_col, y=y_col, color=color_col, title=title, template="plotly_dark")
-            else:
-                fig = px.bar(df, x=x_col, y=y_col, title=title, template="plotly_dark")
+            # 4. Plotly Chart
+            if c_type == "bar": fig = px.bar(df, x=x_col, y=y_col, color=color_col, title=title, template="plotly_dark")
+            elif c_type == "line": fig = px.line(df, x=x_col, y=y_col, color=color_col, title=title, template="plotly_dark")
+            elif c_type == "pie": fig = px.pie(df, names=x_col, values=y_col, title=title, template="plotly_dark")
+            elif c_type == "scatter": fig = px.scatter(df, x=x_col, y=y_col, color=color_col, title=title, template="plotly_dark")
+            elif c_type == "area": fig = px.area(df, x=x_col, y=y_col, color=color_col, title=title, template="plotly_dark")
+            else: fig = px.bar(df, x=x_col, y=y_col, title=title, template="plotly_dark")
 
-            # 5. OVERLAY FORECAST TRACE
             if forecast_df is not None:
-                fig.add_trace(go.Scatter(
-                    x=forecast_df[x_col],
-                    y=forecast_df[y_col],
-                    mode='lines',
-                    name=f'Forecast ({int(growth*100)}% Growth)',
-                    line=dict(color='#00E5FF', width=3, dash='dot')
-                ))
+                fig.add_trace(go.Scatter(x=forecast_df[x_col], y=forecast_df[y_col], mode='lines', name=f'Forecast ({int(growth*100)}%)', line=dict(color='#00E5FF', width=3, dash='dot')))
 
             fig.update_layout(self.layout_style)
-            
-            # 6. Render
             selection = st.plotly_chart(fig, use_container_width=True, on_select="rerun", key=key)
             
-            # Add Description/Insight
-            if description:
-                st.caption(f"💡 {description}")
+            # 5. DEEP INSIGHTS (Interactive Agent)
+            with st.expander(f"🧠 Deep Insights: {title}"):
+                if st.button("⚡ Analyze this Chart", key=f"anl_{key}"):
+                    if st.session_state.get("api_key"):
+                        copilot = StallionCopilot(
+                            st.session_state.get("ai_provider"), 
+                            st.session_state.get("api_key"), 
+                            st.session_state.get("ai_model"),
+                            self.db
+                        )
+                        with st.spinner("Agent is analyzing data patterns..."):
+                            insight = copilot.generate_chart_insight(df, title)
+                            st.markdown(insight)
+                    else:
+                        st.error("Please configure AI Settings in Sidebar.")
+                else:
+                    if description: st.info(f"Context: {description}")
+                    else: st.caption("Click Analyze for AI-driven observations.")
 
-            # 7. Click Handler (Cross-Filtering)
+            # 6. Click Handler
             if selection and selection["selection"]["points"]:
                 point = selection["selection"]["points"][0]
                 if "x" in point:

@@ -2,10 +2,15 @@ import google.generativeai as genai
 import openai
 import json
 import streamlit as st
+import pandas as pd
 
 class StallionCopilot:
     """
-    The SQL-Aware Active Agent with Context & Suggestions.
+    The SQL-Aware Active Agent with 'Reasoning Loop'.
+    Capabilities:
+    1. Direct Dashboard Updates (Visuals).
+    2. Data Querying for Text Answers (Reasoning).
+    3. Context-Aware Summarization.
     """
     
     def __init__(self, provider, api_key, model, db_engine):
@@ -16,18 +21,62 @@ class StallionCopilot:
 
     def process_query(self, user_query, current_config, schema_metadata, focused_context=None):
         """
-        focused_context: ID/Title of the specific chart/KPI the user wants to modify.
+        Executes a 2-step Reasoning Loop:
+        Step 1: Investigator (Should I run SQL?)
+        Step 2: Responder (Answer using the SQL data or update dashboard)
         """
         
-        # 1. Handle Context Filtering
-        context_str = "Global Dashboard (The user is asking about the entire dataset or layout)"
+        # --- STEP 1: THE INVESTIGATOR ---
+        # Ask AI if it needs data to answer.
+        investigator_prompt = f"""
+        You are a Data Investigator.
+        User Query: "{user_query}"
+        Schema: {schema_metadata}
+        Context: {focused_context}
         
-        # Check if user selected a specific Chart/KPI
-        if focused_context and "Global" not in focused_context:
-            context_str = f"FOCUS AREA: The user is explicitly pointing at this component: '{focused_context}'."
+        Task: 
+        - If the user asks for a visualization/chart update, return "ACTION: UPDATE_DASHBOARD".
+        - If the user asks for a summary or report, return "ACTION: SUMMARIZE".
+        - If the user asks a factual question about the data (e.g., "Which stock is most volatile?", "Why is sales down?"), write the SQL query to fetch the answer.
+        
+        Output ONLY one of:
+        - "ACTION: UPDATE_DASHBOARD"
+        - "ACTION: SUMMARIZE"
+        - The SQL Query itself (DuckDB format)
+        """
+        
+        pre_response = self._call_ai(investigator_prompt).strip()
+        
+        # --- STEP 2: EXECUTION ---
+        data_context = ""
+        action_type = "text_answer" # Default
+        
+        # CASE A: AI wants to run SQL to get facts
+        if "SELECT" in pre_response.upper() and "ACTION" not in pre_response:
+            try:
+                clean_sql = pre_response.replace("```sql", "").replace("```", "").strip()
+                df_result, err = self.db.run_query(clean_sql)
+                
+                if not df_result.empty:
+                    # Limit context to top 10 rows to save tokens
+                    csv_preview = df_result.head(10).to_markdown(index=False)
+                    data_context = f"\n[INTERNAL DATA INVESTIGATION]\nSQL Executed: {clean_sql}\nResult Preview:\n{csv_preview}\n"
+                else:
+                    data_context = "\n[INTERNAL DATA INVESTIGATION]\nQuery returned no results."
+            except Exception as e:
+                data_context = f"\n[INTERNAL DATA INVESTIGATION]\nError executing SQL: {str(e)}"
+        
+        # CASE B: Dashboard Update Request
+        elif "UPDATE_DASHBOARD" in pre_response:
+            action_type = "update_dashboard"
+            
+        # CASE C: Summary Request
+        elif "SUMMARIZE" in pre_response:
+            action_type = "summarize"
 
+        # --- STEP 3: THE RESPONDER ---
         system_prompt = f"""
-        You are the SQL Co-Pilot for Stallion Analytics.
+        You are the Stallion Co-Pilot (Enterprise Edition).
         
         DATABASE SCHEMA:
         {schema_metadata}
@@ -35,34 +84,53 @@ class StallionCopilot:
         CURRENT DASHBOARD JSON:
         {json.dumps(current_config)}
         
-        CONTEXT: {context_str}
+        USER FOCUS: {focused_context}
+        
+        {data_context}  <-- CRITICAL: USE THIS REAL DATA TO ANSWER!
         
         USER COMMAND: "{user_query}"
         
         INSTRUCTIONS:
-        1. Decide if this is a Dashboard Update (Visual/SQL change) or a Text Answer (Analysis).
-        2. IF Update: Return "response_type": "update_dashboard" and the FULL updated JSON in "content".
-        3. IF Answer: Return "response_type": "text_answer" and the analytical text in "content".
-        4. ALWAYS provide 2 short, clickable "suggestions" for next steps.
+        1. IF action is 'update_dashboard': Return JSON with "response_type": "update_dashboard" and full config.
+        2. IF action is 'summarize': Return JSON with "response_type": "update_executive_summary" and a rich HTML summary string in "content".
+        3. IF action is 'text_answer': Provide a HIGHLY ANALYTICAL answer based on the DATA INSIGHTS provided above. 
+           - Do not just state numbers; explain *why* (e.g., "Tesla is most volatile (5.4%), likely due to the recent earnings call...").
+           - Be professional and conclusive.
         
         OUTPUT FORMAT (Strict JSON):
         {{
-            "response_type": "update_dashboard" | "text_answer",
-            "content": "string or json_object",
-            "suggestions": ["Action 1", "Action 2"]
+            "response_type": "update_dashboard" | "text_answer" | "update_executive_summary",
+            "content": "string_or_json",
+            "suggestions": ["Next Step 1", "Next Step 2"]
         }}
         """
         
         try:
-            response_text = self._call_ai(system_prompt)
-            return self._clean_json(response_text)
+            final_response = self._call_ai(system_prompt)
+            return self._clean_json(final_response)
         except Exception as e:
-            # Fallback if AI fails or returns bad JSON
             return {
-                "response_type": "text_answer", 
-                "content": f"I analyzed the data but encountered an error parsing the response. Raw output: {str(e)}",
-                "suggestions": ["Try simpler query", "Check Data"]
+                "response_type": "text_answer",
+                "content": f"Reasoning Error: {str(e)}. (I tried to think but failed.)",
+                "suggestions": ["Try simpler query"]
             }
+
+    def generate_chart_insight(self, df, title):
+        """
+        Specialized method for the 'Analyze this Chart' button.
+        """
+        stats = df.describe().to_markdown()
+        prompt = f"""
+        Analyze this chart data for "{title}".
+        Stats:
+        {stats}
+        
+        Provide 3 bullet points:
+        1. Observation (What is happening?)
+        2. Insight (Why is it significant?)
+        3. Recommendation (What to do?)
+        """
+        return self._call_ai(prompt)
 
     def _call_ai(self, prompt):
         if self.provider == "Google Gemini":
@@ -78,9 +146,7 @@ class StallionCopilot:
             return resp.choices[0].message.content
 
     def _clean_json(self, text):
-        # Remove markdown fences and whitespace
         clean = text.replace("```json", "").replace("```", "").strip()
-        # Sometimes AI adds extra text outside JSON, try to find the first { and last }
         start = clean.find("{")
         end = clean.rfind("}") + 1
         if start != -1 and end != -1:
