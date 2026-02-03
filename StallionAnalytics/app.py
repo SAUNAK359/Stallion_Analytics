@@ -47,7 +47,7 @@ def render_sidebar():
             if api_key: st.session_state["api_key"] = api_key
             
             # Set Model Defaults
-            st.session_state["ai_model"] = "gemini-1.5-flash" if provider == "Google Gemini" else "gpt-3.5-turbo"
+            st.session_state["ai_model"] = "gemini-2.5-pro" if provider == "Google Gemini" else "gpt-3.5-turbo"
             
         st.caption("Stallion AI v3.5.0")
 
