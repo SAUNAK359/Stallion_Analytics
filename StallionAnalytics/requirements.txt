@@ -8,3 +8,5 @@ watchdog
 tabulate
 google-generativeai
 duckdb
+scikit-learn
+statsmodels

@@ -27,13 +27,12 @@ def load_css():
 def render_sidebar():
     with st.sidebar:
         st.title("🐎 Stallion")
-        st.caption("Enterprise Edition v3.0")
+        st.caption("Enterprise Edition v3.5")
         st.markdown("---")
         
         # Navigation
         if st.button("🏠 Home", use_container_width=True): set_page("Home")
         if st.button("📊 Dashboard", use_container_width=True): set_page("Dashboard")
-        # Note: 'Analytics' page is removed because it's now a floating widget
         
         st.markdown("---")
         
@@ -48,9 +47,9 @@ def render_sidebar():
             if api_key: st.session_state["api_key"] = api_key
             
             # Set Model Defaults
-            st.session_state["ai_model"] = "gemini-2.5-pro" if provider == "Google Gemini" else "gpt-3.5-turbo"
+            st.session_state["ai_model"] = "gemini-1.5-flash" if provider == "Google Gemini" else "gpt-3.5-turbo"
             
-        st.caption("Stallion AI v3.0.0")
+        st.caption("Stallion AI v3.5.0")
 
 # --- FLOATING CO-PILOT WIDGET ---
 def render_copilot():
@@ -144,11 +143,11 @@ def page_home():
     st.title("Welcome to Stallion Analytics")
     st.markdown("### Enterprise Big Data Engine")
     
-    # UPDATED: Accept Multiple Files
+    # UPDATED: Accept Multiple Files for Blending
     uploaded_files = st.file_uploader(
         "Upload Data (CSV, JSON, Parquet)", 
         type=["csv", "json", "parquet"],
-        accept_multiple_files=True, # <--- NEW: Enable multi-file upload
+        accept_multiple_files=True, 
         help="Upload multiple files (e.g. Sales.csv + Customers.csv) for auto-blending."
     )
     
@@ -264,7 +263,7 @@ def page_dashboard():
     with c2: 
         if st.button("Reset Layout", use_container_width=True):
             st.session_state["dashboard_config"] = {}
-            # Clear suggestions so they regenerate if data changed (optional)
+            # Clear suggestions so they regenerate if data changed
             # st.session_state.pop("intent_suggestions", None) 
             st.rerun()
             
